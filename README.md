@@ -49,8 +49,9 @@ bunx szswap --help
 The npm/bun package is a thin wrapper around the Python program: it creates a
 private virtualenv at `~/.szswap/venv` (override with `SZSWAP_VENV`), installs
 the Python sources into it — using `uv` when available, `pip` otherwise — and
-reuses it for every later run. Setup is lazy, so if the installer blocks
-`postinstall` scripts (bun does by default) the first `szswap` run performs it.
+reuses it for every later run. Nothing runs at install time; the first `szswap`
+invocation performs the one-time setup, so `postinstall` restrictions (bun
+blocks them by default) and npm's git-install lifecycle bug do not matter.
 
 ### From source (development)
 

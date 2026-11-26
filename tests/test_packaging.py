@@ -42,7 +42,12 @@ def test_npm_wrapper_files_exist() -> None:
     for entry in package["files"]:
         matches = list(ROOT.glob(entry))
         assert matches, f"npm files entry matches nothing: {entry}"
-    assert package["scripts"]["postinstall"] == "node npm/install.js"
+    # No install-time lifecycle script: npm runs postinstall with a cwd that does
+    # not exist yet for `npm i -g git+https://...`, which aborts the install.
+    # The bin shim bootstraps lazily instead.
+    assert "postinstall" not in package.get("scripts", {})
+    assert "prepare" not in package.get("scripts", {})
+    assert package["scripts"]["szswap-setup"] == "node npm/install.js"
     assert (ROOT / "npm" / "install.js").is_file()
 
 

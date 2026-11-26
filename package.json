@@ -33,7 +33,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "postinstall": "node npm/install.js"
+    "szswap-setup": "node npm/install.js"
   },
   "engines": {
     "node": ">=18"
