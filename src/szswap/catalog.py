@@ -1,7 +1,14 @@
-"""Catalog of Claude model slots for override mapping."""
+"""Catalog of Claude model slots for override mapping.
+
+``DEFAULT_CLAUDE_MODELS`` is only a fallback hint list: Claude Code's own model
+IDs change over time, so rows are always augmented from the active
+``settings.json`` model and from any existing override keys. Users can add more
+slots via ``claude_model_slots`` in ``config.toml``.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 
@@ -34,8 +41,9 @@ DEFAULT_CLAUDE_MODELS: tuple[ClaudeModelSlot, ...] = (
 def get_claude_model_rows(
     existing_overrides: dict[str, str],
     claude_settings_model: str | None = None,
+    extra_slots: Iterable[str] = (),
 ) -> list[ClaudeModelSlot]:
-    """Return ordered Claude model slots including active and custom overrides."""
+    """Return ordered Claude model slots including active, configured, and custom overrides."""
     rows: list[ClaudeModelSlot] = list(DEFAULT_CLAUDE_MODELS)
     seen_ids: set[str] = {slot.id for slot in rows}
     known_aliases: set[str] = {slot.alias for slot in rows if slot.alias}
@@ -45,6 +53,12 @@ def get_claude_model_rows(
         if active and active not in seen_ids and active not in known_aliases:
             rows.append(ClaudeModelSlot(id=active, label=f"{active} (active)"))
             seen_ids.add(active)
+
+    for raw_slot in extra_slots:
+        slot_id = raw_slot.strip()
+        if slot_id and slot_id not in seen_ids:
+            rows.append(ClaudeModelSlot(id=slot_id, label=f"{slot_id} (configured)"))
+            seen_ids.add(slot_id)
 
     for raw_key in existing_overrides:
         key = raw_key.strip()

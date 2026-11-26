@@ -346,7 +346,9 @@ class ConfirmHotSwapModal(ModalScreen[str | None]):
         )
         with Vertical(id="hotswap-dialog"):
             yield Static(
-                "Ensure Claude Code is idle before updating ~/.claude/settings.json.",
+                "Ensure Claude Code is idle before updating ~/.claude/settings.json.\n"
+                "The token is written there in plaintext (mode 600). Hot-Swap OFF\n"
+                "restores the values that were present before.",
                 id="hotswap-note",
                 markup=False,
             )
@@ -486,6 +488,87 @@ class ConfirmDeleteModal(ModalScreen[bool]):
         self.dismiss(True)
 
     @on(Button.Pressed, "#btn-cancel-delete")
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
+class ConfirmReplaceProviderModal(ModalScreen[bool]):
+    """Confirmation dialog shown before an Add overwrites an existing provider ID."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    DEFAULT_CSS = """
+    ConfirmReplaceProviderModal {
+        align: center middle;
+        background: rgba(8, 10, 16, 0.76);
+    }
+    #replace-dialog {
+        width: 64;
+        height: auto;
+        border: round $warning;
+        border-title-color: $warning;
+        border-title-style: bold;
+        background: $surface;
+        padding: 1 2;
+    }
+    #replace-body {
+        margin-bottom: 1;
+    }
+    #replace-buttons {
+        height: auto;
+        align: right middle;
+        margin-top: 1;
+    }
+    #replace-buttons Button {
+        margin-left: 1;
+    }
+    """
+
+    def __init__(self, provider: ProviderConfig) -> None:
+        super().__init__()
+        self._provider = provider
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="replace-dialog"):
+            yield Static(
+                (
+                    f"A provider with id [bold #F8FAFC]{escape(self._provider.id)}[/] already exists.\n"
+                    "[#64748B]Saving will overwrite its base URL, auth env, model mappings, "
+                    "and cached models.[/]"
+                ),
+                id="replace-body",
+                markup=True,
+            )
+            with Horizontal(id="replace-buttons"):
+                yield Button("Overwrite", id="btn-confirm-replace", variant="warning", classes="chip", compact=True)
+                yield Button("Cancel", id="btn-cancel-replace", classes="chip", compact=True)
+
+    def on_mount(self) -> None:
+        dialog = self.query_one("#replace-dialog", Vertical)
+        dialog.border_title = "Overwrite Provider?"
+        dialog.border_subtitle = "←/→ choose · Esc cancel"
+        self.query_one("#btn-cancel-replace", Button).focus()
+
+    def on_key(self, event: events.Key) -> None:
+        btns = list(self.query("#replace-buttons Button"))
+        if event.key == "left":
+            if _step_focus(btns, self.focused, -1):
+                event.stop()
+                event.prevent_default()
+        elif event.key == "right":
+            if _step_focus(btns, self.focused, 1):
+                event.stop()
+                event.prevent_default()
+
+    def on_click(self, event: events.Click) -> None:
+        if event.widget is self:
+            self.dismiss(False)
+
+    @on(Button.Pressed, "#btn-confirm-replace")
+    def _confirm(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#btn-cancel-replace")
     def action_cancel(self) -> None:
         self.dismiss(False)
 
@@ -902,12 +985,14 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
         existing: ProviderConfig | None = None,
         claude_default_model: str | None = None,
         fetch_fn: FetchFn = fetch_models_async,
+        extra_slots: list[str] | None = None,
     ) -> None:
         super().__init__()
         self._existing = existing
         self._is_edit = existing is not None
         self._claude_default_model = claude_default_model
         self._fetch_fn = fetch_fn
+        self._extra_slots = list(extra_slots or [])
         self._cached_models: list[str] = list(existing.cached_models) if existing else []
         self._overrides: dict[str, str] = dict(existing.model_overrides) if existing else {}
         self._custom_claude_models: list[str] = []
@@ -1134,7 +1219,11 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
         self._update_env_status(event.value)
 
     def _get_mapping_slots(self) -> list[ClaudeModelSlot]:
-        slots = get_claude_model_rows(self._overrides, self._claude_default_model)
+        slots = get_claude_model_rows(
+            self._overrides,
+            self._claude_default_model,
+            self._extra_slots,
+        )
         known_ids = {s.id for s in slots}
         for custom_id in self._custom_claude_models:
             if custom_id not in known_ids:
@@ -1256,8 +1345,12 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
                 auth_env=auth_env,
                 models_endpoint=models_ep,
             )
-        except (FetchError, ConfigError, Exception) as exc:
+        except (FetchError, ConfigError) as exc:
             status_lbl.update(f"Fetch failed: {exc}")
+            return
+        except Exception as exc:  # pragma: no cover - unexpected provider payloads
+            self.log.exception("Unexpected error while fetching models")
+            status_lbl.update(f"Fetch failed ({type(exc).__name__}): {exc}")
             return
 
         self._cached_models = list(result.models)
@@ -1712,7 +1805,11 @@ class SzSwapApp(App[LaunchRequest | None]):
         claude_default = (
             self._last_status.claude_default_model if self._last_status is not None else None
         )
-        slots = get_claude_model_rows(provider.model_overrides, claude_default)
+        slots = get_claude_model_rows(
+            provider.model_overrides,
+            claude_default,
+            self.cfg.claude_model_slots,
+        )
         mapped_count = sum(1 for s in slots if provider.model_overrides.get(s.id))
         detail_tbl.display = True
         empty_lbl.display = False
@@ -1781,7 +1878,9 @@ class SzSwapApp(App[LaunchRequest | None]):
                 provider.model_overrides.pop(claude_model, None)
             else:
                 provider.model_overrides[claude_model] = result
-            save_config(self.cfg, path=self._config_path)
+            if not self._safe_save_config():
+                self._refresh_all()
+                return
             self._refresh_provider_list()
             self._refresh_provider_details(select_model_id=claude_model)
             self.notify(
@@ -1797,16 +1896,44 @@ class SzSwapApp(App[LaunchRequest | None]):
             _on_quick_picked,
         )
 
-    def _on_provider_saved(self, provider: ProviderConfig | None) -> None:
-        if provider is None:
-            return
+    def _safe_save_config(self) -> bool:
+        """Persist config, reporting failures instead of crashing the TUI."""
+        try:
+            save_config(self.cfg, path=self._config_path)
+            return True
+        except (ConfigError, OSError) as exc:
+            self.notify(f"Failed to save config: {exc}", severity="error")
+            self.cfg = load_config(path=self._config_path)
+            return False
+
+    def _persist_provider(self, provider: ProviderConfig) -> None:
         self.cfg.providers[provider.id] = provider
         if not self.cfg.default_provider:
             self.cfg.default_provider = provider.id
-        save_config(self.cfg, path=self._config_path)
+        if not self._safe_save_config():
+            self._refresh_all()
+            return
         self.selected_provider_id = provider.id
         self._refresh_all()
         self.notify(f"Saved provider '{provider.id}'.")
+
+    def _on_provider_saved(self, provider: ProviderConfig | None) -> None:
+        if provider is None:
+            return
+        self._persist_provider(provider)
+
+    def _on_provider_added(self, provider: ProviderConfig | None) -> None:
+        if provider is None:
+            return
+        if provider.id not in self.cfg.providers:
+            self._persist_provider(provider)
+            return
+
+        def _on_replace_confirmed(confirmed: bool) -> None:
+            if confirmed:
+                self._persist_provider(provider)
+
+        self.push_screen(ConfirmReplaceProviderModal(provider), _on_replace_confirmed)
 
     @on(Button.Pressed, "#btn-add")
     def action_add_provider(self) -> None:
@@ -1816,8 +1943,9 @@ class SzSwapApp(App[LaunchRequest | None]):
                 existing=None,
                 claude_default_model=claude_default,
                 fetch_fn=self._fetch_fn,
+                extra_slots=self.cfg.claude_model_slots,
             ),
-            self._on_provider_saved,
+            self._on_provider_added,
         )
 
     @on(Button.Pressed, "#btn-edit")
@@ -1832,6 +1960,7 @@ class SzSwapApp(App[LaunchRequest | None]):
                 existing=provider,
                 claude_default_model=claude_default,
                 fetch_fn=self._fetch_fn,
+                extra_slots=self.cfg.claude_model_slots,
             ),
             self._on_provider_saved,
         )
@@ -1853,12 +1982,20 @@ class SzSwapApp(App[LaunchRequest | None]):
                 auth_env=provider.auth_env,
                 models_endpoint=provider.models_endpoint,
             )
-        except (FetchError, ConfigError, Exception) as exc:
+        except (FetchError, ConfigError) as exc:
             self.notify(f"Fetch failed for '{provider.id}': {exc}", severity="error")
+            return
+        except Exception as exc:  # pragma: no cover - unexpected provider payloads
+            self.log.exception("Unexpected error while fetching models")
+            self.notify(
+                f"Fetch failed for '{provider.id}' ({type(exc).__name__}): {exc}",
+                severity="error",
+            )
             return
 
         provider.cached_models = list(result.models)
-        save_config(self.cfg, path=self._config_path)
+        if not self._safe_save_config():
+            return
         self._refresh_provider_list()
         self._refresh_provider_details()
         self.notify(f"Fetched {len(result.models)} models from {result.endpoint_used}.")
@@ -1930,7 +2067,7 @@ class SzSwapApp(App[LaunchRequest | None]):
     def _enable_hotswap(self, provider: ProviderConfig) -> None:
         try:
             apply_hotswap(provider, claude_dir=self._claude_dir)
-        except (EngineError, ConfigError) as exc:
+        except (EngineError, ConfigError, OSError) as exc:
             self.notify(f"Hot-Swap failed: {exc}", severity="error")
             return
         self._refresh_all()
@@ -1939,7 +2076,7 @@ class SzSwapApp(App[LaunchRequest | None]):
     def _disable_hotswap(self) -> None:
         try:
             restore_anthropic(claude_dir=self._claude_dir)
-        except EngineError as exc:
+        except (EngineError, OSError) as exc:
             self.notify(f"Failed to turn Hot-Swap off: {exc}", severity="error")
             return
         self._refresh_all()
@@ -1958,7 +2095,9 @@ class SzSwapApp(App[LaunchRequest | None]):
             self.cfg.providers.pop(provider.id, None)
             if self.cfg.default_provider == provider.id:
                 self.cfg.default_provider = ""
-            save_config(self.cfg, path=self._config_path)
+            if not self._safe_save_config():
+                self._refresh_all()
+                return
             self.selected_provider_id = None
             self._refresh_all()
             self.notify(f"Deleted provider '{provider.id}'.")

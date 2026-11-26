@@ -1,0 +1,46 @@
+{
+  "name": "szswap",
+  "version": "0.1.0",
+  "description": "Safe multi-provider & model-override switcher for Claude Code",
+  "license": "MIT",
+  "author": "seiz888",
+  "homepage": "https://github.com/seiz888/szswap",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seiz888/szswap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/seiz888/szswap/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "anthropic",
+    "cli",
+    "tui",
+    "proxy",
+    "model-switcher"
+  ],
+  "bin": {
+    "szswap": "npm/bin/szswap.js"
+  },
+  "files": [
+    "npm/bin/szswap.js",
+    "npm/lib/bootstrap.js",
+    "npm/install.js",
+    "src/szswap/*.py",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node npm/install.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ]
+}

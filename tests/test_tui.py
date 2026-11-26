@@ -83,7 +83,7 @@ async def test_add_provider_fetch_map_and_save(isolated_env: tuple[Path, Path]) 
         await pilot.click("#btn-save")
         await pilot.pause()
 
-    cfg = load_config(auto_seed=False)
+    cfg = load_config()
     assert "mygw" in cfg.providers
     provider = cfg.providers["mygw"]
     assert provider.display_name == "My Gateway"
@@ -156,9 +156,13 @@ async def test_hotswap_and_switch_to_anthropic(isolated_env: tuple[Path, Path]) 
         assert "Anthropic Direct" in restored_banner
 
         restored_settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        assert restored_settings["env"]["ANTHROPIC_BASE_URL"] == ""
-        assert restored_settings["env"]["ANTHROPIC_AUTH_TOKEN"] == ""
-        assert restored_settings["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == ""
+        restored_env = restored_settings.get("env") or {}
+        for key in (
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        ):
+            assert key not in restored_env
         assert "modelOverrides" not in restored_settings
         assert restored_settings["permissions"] == {"allow": ["Read"]}
 
@@ -240,7 +244,7 @@ async def test_dashboard_arrow_navigation_and_quick_map(isolated_env: tuple[Path
         await pilot.press("enter")
         await pilot.pause()
 
-    updated = load_config(auto_seed=False)
+    updated = load_config()
     assert updated.providers["mygw"].model_overrides["claude-opus-5-5"] == "kimi-k3"
 
 

@@ -5,3 +5,10 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# npm / bun
+node_modules/
+*.tgz
+package-lock.json
+bun.lock
+bun.lockb

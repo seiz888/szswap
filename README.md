@@ -14,23 +14,59 @@ Switch between third-party Anthropic-compatible gateways and your default Anthro
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.12+ (also required when installing through npm/bun)
 - Claude Code CLI (`claude`) available on `PATH`
 
 ## Installation
 
-Using `uv`:
+szSwap is a Python program. Any of these installers give you the same `szswap`
+command — pick whatever you already use.
+
+### Python installers
 
 ```bash
-uv tool install .
+uv tool install .                                       # from a checkout
+uv tool install git+https://github.com/seiz888/szswap   # from git
+pipx install .                                          # or from git
+pip install --user .                                    # plain pip
 ```
 
-Or in a local editable environment:
+After a plain `pip install` you can also run it as a module:
+
+```bash
+python -m szswap status
+```
+
+### npm / bun
+
+```bash
+npm install -g .        # from a checkout
+bun add -g .
+npx szswap --help       # without installing globally
+bunx szswap --help
+```
+
+The npm/bun package is a thin wrapper around the Python program: it creates a
+private virtualenv at `~/.szswap/venv` (override with `SZSWAP_VENV`), installs
+the Python sources into it — using `uv` when available, `pip` otherwise — and
+reuses it for every later run. Setup is lazy, so if the installer blocks
+`postinstall` scripts (bun does by default) the first `szswap` run performs it.
+
+### From source (development)
 
 ```bash
 uv sync --extra dev
+uv run szswap
 # or
 pip install -e ".[dev]"
+pytest -q
+```
+
+Packaging entry points:
+
+```bash
+uv build                     # dist/szswap-<version>.tar.gz + .whl
+npm pack                     # szswap-<version>.tgz for the npm/bun wrapper
 ```
 
 ## Quickstart
@@ -65,8 +101,8 @@ pip install -e ".[dev]"
 | Command | Description |
 | --- | --- |
 | `szswap` / `szswap ui` | Launch the interactive TUI |
-| `szswap run <provider> [--dir PATH] [-- <claude_args>...]` | Launch an isolated Claude Code session for `<provider>` |
-| `szswap use <provider\|off\|anthropic\|default>` | Toggle Hot-Swap in `~/.claude/settings.json` |
+| `szswap run <provider> [--dir PATH] [-- <claude_args>...]` | Launch an isolated Claude Code session for `<provider>`; unrecognized flags are forwarded to `claude` |
+| `szswap use <provider\|off\|anthropic\|default>` | Toggle Hot-Swap in `~/.claude/settings.json`; `off` restores the values that existed before |
 | `szswap status` | Show current Hot-Swap status, Claude account, and configured providers |
 | `szswap fetch <provider>` | Fetch and cache models from the provider's models endpoint |
 | `szswap providers` | List configured providers and model overrides |
@@ -80,11 +116,15 @@ schema_version = 1
 default_provider = "mygw"
 share_projects_history = true
 
+# Optional: extra Claude model IDs always shown in the override matrix,
+# on top of the built-in fallback list (see src/szswap/catalog.py).
+claude_model_slots = ["claude-opus-5-5", "claude-sonnet-5-5"]
+
 [providers.mygw]
 id = "mygw"
 display_name = "My Gateway"
 base_url = "https://api.example.com"
-auth_mode = "bearer" # "bearer" or "api_key"
+auth_mode = "bearer" # "bearer" or "x-api-key"
 auth_env = "MY_GATEWAY_API_KEY"
 models_endpoint = "/v1/models"
 default_model = ""
@@ -99,13 +139,33 @@ cached_models = []
 
 - `config.toml` only stores `auth_env` (the environment variable name), never secret values.
 - **Mode A (`szswap run`)** never persists API tokens to disk.
-- **Mode B (`szswap use`)** writes the resolved token into `~/.claude/settings.json` (`env.ANTHROPIC_AUTH_TOKEN` or `env.ANTHROPIC_API_KEY`) as required by Claude Code's settings file. Run `szswap use off` to clear managed keys and `modelOverrides`.
+- **Mode B (`szswap use`)** writes the resolved token into `~/.claude/settings.json` (`env.ANTHROPIC_AUTH_TOKEN` or `env.ANTHROPIC_API_KEY`) as required by Claude Code's settings file, and sets the file mode to `0600`.
+- Before the first Hot-Swap, the previous `env` / `modelOverrides` values are snapshotted to `~/.szswap/state.json` (mode `0600`; it may contain a token you configured yourself). `szswap use off` restores that snapshot exactly, so a key or override you configured yourself is never destroyed. The snapshot is deleted once restored.
+- Invalid provider entries in `config.toml` are skipped with a warning instead of making the whole configuration unreadable.
 
 ## Development
 
 ```bash
+uv sync --extra dev
 pytest -q
 ```
+
+## Releasing
+
+The version in `pyproject.toml` and `package.json` must match the tag.
+
+```bash
+# bump both version fields, then:
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` builds the wheel/sdist and publishes them to
+PyPI (trusted publishing, `release` environment) and the npm wrapper to npm.
+Setup required for the first release:
+
+- PyPI: add a trusted publisher for this repo with environment `release`.
+- npm: add an `NPM_TOKEN` repository secret.
+- Also bump `version` in `package.json` — the workflow fails if they diverge.
 
 ## License
 

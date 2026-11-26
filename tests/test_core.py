@@ -146,7 +146,7 @@ def test_config_toml_roundtrip(tmp_path: Path) -> None:
     assert saved_path == cfg_path
     assert cfg_path.exists()
 
-    loaded = load_config(path=cfg_path, auto_seed=False)
+    loaded = load_config(path=cfg_path)
     assert loaded.schema_version == 1
     assert loaded.default_provider == "mygw"
     assert loaded.share_projects_history is False
@@ -165,7 +165,7 @@ def test_load_config_missing_without_env_returns_empty(
     cfg_path = tmp_path / "config.toml"
     monkeypatch.delenv("MY_GATEWAY_API_KEY", raising=False)
 
-    cfg = load_config(path=cfg_path, auto_seed=True)
+    cfg = load_config(path=cfg_path)
     assert not cfg_path.exists()
     assert cfg.providers == {}
     assert check_env_status("MY_GATEWAY_API_KEY") == (False, 0)
@@ -431,6 +431,7 @@ def test_mode_b_hotswap_and_restore_anthropic_preserve_unrelated_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cdir = _make_fake_claude_dir(tmp_path)
+    sdir = tmp_path / ".szswap"
     monkeypatch.setenv("MY_GATEWAY_API_KEY", "hotswap-token-123")
 
     provider = ProviderConfig(
@@ -450,7 +451,7 @@ def test_mode_b_hotswap_and_restore_anthropic_preserve_unrelated_settings(
     assert initial_status.claude_default_model == "claude-opus-5-5"
 
     # Apply Mode B hotswap.
-    apply_hotswap(provider, claude_dir=cdir)
+    apply_hotswap(provider, claude_dir=cdir, szswap_dir=sdir)
     swapped = json.loads((cdir / "settings.json").read_text(encoding="utf-8"))
     assert swapped["model"] == "claude-opus-5-5"
     assert swapped["permissions"] == {"allow": ["Bash(git status)"]}
@@ -471,8 +472,8 @@ def test_mode_b_hotswap_and_restore_anthropic_preserve_unrelated_settings(
     assert proxy_status.nonessential_disabled is True
     assert proxy_status.model_overrides == {"claude-opus-5-5": "glm-5.3"}
 
-    # Restore default Anthropic settings.
-    restore_anthropic(claude_dir=cdir)
+    # Restore default Anthropic settings: original values come back exactly.
+    restore_anthropic(claude_dir=cdir, szswap_dir=sdir)
     restored = json.loads((cdir / "settings.json").read_text(encoding="utf-8"))
     assert restored["model"] == "claude-opus-5-5"
     assert restored["permissions"] == {"allow": ["Bash(git status)"]}
@@ -480,7 +481,7 @@ def test_mode_b_hotswap_and_restore_anthropic_preserve_unrelated_settings(
     assert restored["env"]["CUSTOM_KEEP"] == "yes"
     assert "modelOverrides" not in restored
     for key in MANAGED_ENV_KEYS:
-        assert restored["env"][key] == ""
+        assert key not in restored["env"]
 
     restored_status = get_status(cfg, claude_dir=cdir)
     assert restored_status.mode == "anthropic"

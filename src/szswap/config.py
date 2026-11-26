@@ -127,6 +127,9 @@ class AppConfig:
     default_provider: str = ""
     share_projects_history: bool = True
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
+    # Extra Claude model IDs always offered in the override matrix, on top of
+    # the built-in fallback catalog (see szswap.catalog).
+    claude_model_slots: list[str] = field(default_factory=list)
 
 
 def get_szswap_dir() -> Path:
@@ -230,9 +233,28 @@ def _provider_to_dict(provider: ProviderConfig) -> dict[str, Any]:
     }
 
 
-def load_config(path: Path | None = None, auto_seed: bool = True) -> AppConfig:
-    """Load AppConfig from TOML, returning an empty config if the file does not exist."""
-    _ = auto_seed
+def _clean_str_list(values: Any) -> list[str]:
+    """Return a de-duplicated, order-preserving list of non-empty strings."""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    if not isinstance(values, list):
+        return cleaned
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        item = value.strip()
+        if item and item not in seen:
+            seen.add(item)
+            cleaned.append(item)
+    return cleaned
+
+
+def load_config(path: Path | None = None) -> AppConfig:
+    """Load AppConfig from TOML, returning an empty config if the file does not exist.
+
+    Invalid provider entries are skipped with a warning instead of making the whole
+    configuration unreadable for both the CLI and the TUI.
+    """
     cfg_path = path if path is not None else get_config_path()
     if not cfg_path.exists():
         return AppConfig()
@@ -248,7 +270,22 @@ def load_config(path: Path | None = None, auto_seed: bool = True) -> AppConfig:
     if not isinstance(raw_providers, dict):
         raise ConfigError("'providers' section in config must be a table.")
     for pid, pdata in raw_providers.items():
-        provider = _provider_from_dict(str(pid), pdata)
+        table_key = str(pid)
+        try:
+            provider = _provider_from_dict(table_key, pdata)
+        except ConfigError as exc:
+            print(
+                f"warning: skipping invalid provider '{table_key}' in '{cfg_path}': {exc}",
+                file=sys.stderr,
+            )
+            continue
+        if provider.id != table_key:
+            print(
+                f"warning: skipping provider '{table_key}' in '{cfg_path}': "
+                f"its id '{provider.id}' does not match the table key.",
+                file=sys.stderr,
+            )
+            continue
         providers[provider.id] = provider
 
     default_provider = str(data.get("default_provider") or "").strip()
@@ -260,6 +297,7 @@ def load_config(path: Path | None = None, auto_seed: bool = True) -> AppConfig:
         default_provider=default_provider,
         share_projects_history=bool(data.get("share_projects_history", True)),
         providers=providers,
+        claude_model_slots=_clean_str_list(data.get("claude_model_slots")),
     )
 
 
@@ -284,6 +322,7 @@ def save_config(cfg: AppConfig, path: Path | None = None) -> Path:
         "schema_version": int(cfg.schema_version),
         "default_provider": str(cfg.default_provider or ""),
         "share_projects_history": bool(cfg.share_projects_history),
+        "claude_model_slots": _clean_str_list(cfg.claude_model_slots),
         "providers": serialized_providers,
     }
     toml_text = tomli_w.dumps(payload)

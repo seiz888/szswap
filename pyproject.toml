@@ -1,12 +1,32 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "szswap"
 version = "0.1.0"
 description = "Safe multi-provider & model-override switcher for Claude Code"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
+authors = [{ name = "seiz888" }]
+keywords = ["claude-code", "anthropic", "cli", "tui", "proxy", "model-switcher"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: User Interfaces",
+    "Typing :: Typed",
+]
 dependencies = [
     "textual>=1.0.0",
     "httpx>=0.27.0",
@@ -19,11 +39,26 @@ dev = [
     "pytest-asyncio>=0.24.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/seiz888/szswap"
+Repository = "https://github.com/seiz888/szswap"
+Issues = "https://github.com/seiz888/szswap/issues"
+Changelog = "https://github.com/seiz888/szswap/commits/main"
+
 [project.scripts]
 szswap = "szswap.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/szswap"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/szswap",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -50,10 +50,8 @@ def _cmd_ui() -> int:
 def _cmd_run(args: argparse.Namespace) -> int:
     cfg = load_config()
     provider = _require_provider(cfg, args.provider)
-    claude_args = list(args.claude_args or [])
-    if claude_args and claude_args[0] == "--":
-        claude_args = claude_args[1:]
-    cwd = Path(args.dir) if args.dir else None
+    claude_args = list(getattr(args, "claude_args", None) or [])
+    cwd = Path(args.dir).expanduser() if args.dir else None
     return run_isolated(provider, cfg, cwd=cwd, claude_args=claude_args)
 
 
@@ -61,7 +59,10 @@ def _cmd_use(args: argparse.Namespace) -> int:
     target = args.target.strip()
     if target.lower() in {"off", "anthropic", "default"}:
         settings_path = restore_anthropic()
-        print(f"Hot-Swap OFF (Anthropic Direct). Updated: {settings_path}")
+        if settings_path.exists():
+            print(f"Hot-Swap OFF (Anthropic Direct). Restored: {settings_path}")
+        else:
+            print("Hot-Swap OFF (Anthropic Direct). No settings.json found; nothing to restore.")
         return 0
 
     cfg = load_config()
@@ -152,6 +153,16 @@ def _cmd_providers() -> int:
     return 0
 
 
+def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("provider", help="Provider ID to launch")
+    parser.add_argument(
+        "--dir",
+        dest="dir",
+        default=None,
+        help="Working directory for Claude Code (defaults to the current directory)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="szswap",
@@ -162,13 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("ui", help="Launch the interactive TUI (default)")
 
     p_run = sub.add_parser("run", help="Launch an isolated Claude Code session for a provider")
-    p_run.add_argument("provider", help="Provider ID to launch")
-    p_run.add_argument("--dir", dest="dir", default=None, help="Working directory for Claude Code")
-    p_run.add_argument(
-        "claude_args",
-        nargs=argparse.REMAINDER,
-        help="Extra arguments passed to claude (prefix with --)",
-    )
+    _add_run_arguments(p_run)
 
     p_use = sub.add_parser(
         "use",
@@ -185,9 +190,50 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parse_run_argv(argv: list[str]) -> argparse.Namespace:
+    """Parse `run` separately so every non-szswap flag is forwarded to claude verbatim.
+
+    argparse's REMAINDER (and parse_known_args ordering) would otherwise swallow
+    szswap's own `--dir` option or drop non-flag arguments out of order.
+    """
+    run_parser = argparse.ArgumentParser(
+        prog="szswap run",
+        description="Launch an isolated Claude Code session for a provider. "
+        "Any unrecognized argument is forwarded to claude.",
+    )
+    _add_run_arguments(run_parser)
+    args, rest = run_parser.parse_known_args(argv)
+    args.command = "run"
+    args.claude_args = rest
+    return args
+
+
+def _split_passthrough(argv: list[str]) -> tuple[list[str], list[str]]:
+    """Split argv at the first bare '--' so claude args can never be eaten by argparse."""
+    if "--" not in argv:
+        return argv, []
+    split_at = argv.index("--")
+    return argv[:split_at], argv[split_at + 1 :]
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    parser_argv, passthrough = _split_passthrough(raw)
+
+    if parser_argv[:1] == ["run"]:
+        try:
+            args = _parse_run_argv(parser_argv[1:])
+        except SystemExit as exc:
+            return int(exc.code or 0)
+        args.claude_args = passthrough + list(args.claude_args or [])
+        unknown: list[str] = []
+    else:
+        parser = build_parser()
+        args, unknown = parser.parse_known_args(parser_argv)
+
+    if args.command != "run" and unknown:
+        print(f"error: unrecognized arguments: {' '.join(unknown)}", file=sys.stderr)
+        return 2
 
     try:
         if args.command is None or args.command == "ui":
@@ -202,9 +248,12 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_fetch(args)
         if args.command == "providers":
             return _cmd_providers()
-        parser.print_help()
+        print(f"error: unknown command '{args.command}'", file=sys.stderr)
         return 2
     except (ConfigError, FetchError, EngineError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
