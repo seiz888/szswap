@@ -36,6 +36,7 @@ async def test_add_provider_fetch_map_and_save(isolated_env: tuple[Path, Path]) 
         auth_mode: str,
         auth_env: str,
         models_endpoint: str = "/v1/models",
+        token: str | None = None,
     ) -> FetchResult:
         return FetchResult(
             models=list(fake_models),

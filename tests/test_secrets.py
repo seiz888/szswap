@@ -8,8 +8,9 @@ import os
 import stat
 from pathlib import Path
 
+import httpx
 import pytest
-from textual.widgets import Input
+from textual.widgets import Input, Static
 
 from szswap import cli
 from szswap.config import (
@@ -29,6 +30,7 @@ from szswap.config import (
     save_secret,
 )
 from szswap.engine import apply_hotswap, build_launch_spec, restore_anthropic
+from szswap.fetcher import FetchResult, fetch_models_async
 from szswap.tui import SzSwapApp
 
 TEST_KEY = "ah-test-key-0123456789abcdef"
@@ -217,6 +219,53 @@ async def test_deleting_provider_removes_its_stored_key(tmp_path: Path) -> None:
     assert load_secrets() == {}
 
 
+async def test_fetch_uses_key_typed_before_saving(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_fetch(
+        base_url: str,
+        auth_mode: str,
+        auth_env: str,
+        models_endpoint: str = "/v1/models",
+        token: str | None = None,
+    ) -> FetchResult:
+        captured.update(token=token, auth_env=auth_env)
+        return FetchResult(
+            models=["m1"],
+            endpoint_used=f"{base_url}/v1/models",
+            status_code=200,
+        )
+
+    app = SzSwapApp(fetch_fn=fake_fetch)
+    async with app.run_test(size=(140, 46)) as pilot:
+        await pilot.pause()
+        await pilot.click("#btn-add")
+        await pilot.pause()
+
+        screen = app.screen
+        screen.query_one("#inp-id", Input).value = "seiz"
+        screen.query_one("#inp-name", Input).value = "Seiz"
+        screen.query_one("#inp-url", Input).value = "https://sg.seiz.cloud/anthropic"
+        screen.query_one("#inp-api-key", Input).value = TEST_KEY
+        await pilot.pause()
+
+        # The status must say the typed key is not stored yet.
+        status = str(screen.query_one("#lbl-env-status", Static).render())
+        assert "SZ_SEIZ_API_KEY" in status
+        assert "Save" in status
+
+        # Fetch must work immediately with the key that is still in the field.
+        await pilot.click("#btn-fetch-models")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        fetch_status = str(screen.query_one("#lbl-fetch-status", Static).render())
+        assert "1 models" in fetch_status
+
+    assert captured["token"] == TEST_KEY
+    assert captured["auth_env"] == "SZ_SEIZ_API_KEY"
+    assert load_secrets() == {}
+
+
 async def test_renaming_env_var_migrates_stored_key(tmp_path: Path) -> None:
     save_secret("SZ_API_KEY", TEST_KEY)
     save_config(AppConfig(default_provider="seiz", providers={"seiz": _provider()}))
@@ -233,6 +282,27 @@ async def test_renaming_env_var_migrates_stored_key(tmp_path: Path) -> None:
 
     assert load_config().providers["seiz"].auth_env == "SZ_RENAMED_KEY"
     assert load_secrets() == {"SZ_RENAMED_KEY": TEST_KEY}
+
+
+@pytest.mark.asyncio
+async def test_fetch_models_accepts_unsaved_token() -> None:
+    seen_headers: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.update(dict(request.headers))
+        return httpx.Response(200, json={"data": [{"id": "m1"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await fetch_models_async(
+            base_url="https://gw.example.com",
+            auth_mode="bearer",
+            auth_env="SZ_API_KEY",
+            client=client,
+            token="typed-but-unsaved",
+        )
+
+    assert result.models == ["m1"]
+    assert seen_headers.get("authorization") == "Bearer typed-but-unsaved"
 
 
 def test_cli_key_set_and_clear(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -98,18 +98,28 @@ async def fetch_models_async(
     models_endpoint: str = "/v1/models",
     timeout: float = 15.0,
     client: httpx.AsyncClient | None = None,
+    token: str | None = None,
 ) -> FetchResult:
-    """Fetch available model IDs from a provider asynchronously."""
+    """Fetch available model IDs from a provider asynchronously.
+
+    ``token`` lets callers (e.g. the editor) use a key that has not been stored
+    yet; when omitted the key is resolved from the environment/secrets store.
+    """
     if auth_mode not in AUTH_MODES:
         raise FetchError(f"Unsupported auth mode '{auth_mode}'.")
-    if not auth_env:
-        raise FetchError("Provider auth_env is not configured.")
 
-    token = resolve_env_var(auth_env)
-    if not token:
-        raise FetchError(
-            f"No API key for '{auth_env}': export it or store it in the provider editor."
-        )
+    if token is not None:
+        token = token.strip()
+        if not token:
+            raise FetchError("API key is empty.")
+    else:
+        if not auth_env:
+            raise FetchError("Provider auth_env is not configured.")
+        token = resolve_env_var(auth_env)
+        if not token:
+            raise FetchError(
+                f"No API key for '{auth_env}': export it or store it in the provider editor."
+            )
 
     try:
         urls = build_models_urls(base_url, models_endpoint)
@@ -173,6 +183,7 @@ def fetch_models(
     auth_env: str,
     models_endpoint: str = "/v1/models",
     timeout: float = 15.0,
+    token: str | None = None,
 ) -> FetchResult:
     """Synchronous wrapper around fetch_models_async."""
     return asyncio.run(
@@ -182,5 +193,6 @@ def fetch_models(
             auth_env=auth_env,
             models_endpoint=models_endpoint,
             timeout=timeout,
+            token=token,
         )
     )

@@ -1101,7 +1101,7 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
     def on_mount(self) -> None:
         left_panel = self.query_one("#editor-left", Vertical)
         left_panel.border_title = "Configuration"
-        left_panel.border_subtitle = "key via UI or env var · never in config.toml"
+        left_panel.border_subtitle = "key via UI or env var · not in config.toml"
 
         right_panel = self.query_one("#editor-mappings", Vertical)
         right_panel.border_title = "Model Mapping (Claude → Provider)"
@@ -1111,7 +1111,7 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
         table.cursor_type = "row"
         table.add_columns("Claude Model", "Alias", "Provider Model")
         self._rebuild_mappings_table()
-        self._update_env_status(self.query_one("#inp-auth-env", Input).value)
+        self._refresh_env_status()
 
         first_field = self.query_one("#inp-name" if self._is_edit else "#inp-id", Input)
         first_field.focus()
@@ -1220,16 +1220,45 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
                 event.prevent_default()
                 return
 
-    def _update_env_status(self, raw_value: str) -> None:
+    def _refresh_env_status(self) -> None:
         lbl = self.query_one("#lbl-env-status", Static)
-        text = raw_value.strip()
-        if not text:
-            lbl.update(Text("▲ Name only, e.g. SZ_API_KEY — or leave blank and paste a key", style="#FBBF24"))
+        typed_key = self.query_one("#inp-api-key", Input).value.strip()
+        raw_env = self.query_one("#inp-auth-env", Input).value.strip()
+
+        if not raw_env and not typed_key:
+            lbl.update(
+                Text(
+                    "▲ Name only, e.g. SZ_API_KEY — or paste a key below",
+                    style="#FBBF24",
+                )
+            )
             return
-        try:
-            env_name = validate_env_var_name(text)
-        except ConfigError as exc:
-            lbl.update(Text(f"✕ {exc}", style="#F87171"))
+
+        if raw_env:
+            try:
+                env_name = validate_env_var_name(raw_env)
+            except ConfigError as exc:
+                lbl.update(Text(f"✕ {exc}", style="#F87171"))
+                return
+        else:
+            try:
+                env_name = default_env_name(self.query_one("#inp-id", Input).value)
+            except ConfigError:
+                env_name = ""
+            if not env_name:
+                lbl.update(
+                    Text("▲ Fix the Provider ID to derive a variable name", style="#FBBF24")
+                )
+                return
+
+        if typed_key:
+            # Not stored yet: be explicit so nobody thinks Fetch is using it blindly.
+            lbl.update(
+                Text(
+                    f"● {env_name} — key typed, stored when you press Save",
+                    style="#4ADE80",
+                )
+            )
             return
 
         source = env_value_source(env_name)
@@ -1243,14 +1272,16 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
         else:
             lbl.update(
                 Text(
-                    f"▲ {env_name} not set — paste a key above or export it",
+                    f"▲ {env_name} not set — paste a key below or export it",
                     style="#F87171",
                 )
             )
 
     @on(Input.Changed, "#inp-auth-env")
-    def _on_auth_env_changed(self, event: Input.Changed) -> None:
-        self._update_env_status(event.value)
+    @on(Input.Changed, "#inp-api-key")
+    @on(Input.Changed, "#inp-id")
+    def _on_env_inputs_changed(self) -> None:
+        self._refresh_env_status()
 
     def _get_mapping_slots(self) -> list[ClaudeModelSlot]:
         slots = get_claude_model_rows(
@@ -1364,7 +1395,14 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
         status_lbl = self.query_one("#lbl-fetch-status", Static)
         try:
             base_url = validate_base_url(self.query_one("#inp-url", Input).value)
-            auth_env = validate_env_var_name(self.query_one("#inp-auth-env", Input).value)
+            raw_env = self.query_one("#inp-auth-env", Input).value.strip()
+            typed_key = self.query_one("#inp-api-key", Input).value.strip()
+            if raw_env:
+                auth_env = validate_env_var_name(raw_env)
+            elif typed_key:
+                auth_env = default_env_name(self.query_one("#inp-id", Input).value)
+            else:
+                raise ConfigError("Enter an env var name or paste an API key.")
             auth_mode = str(self.query_one("#sel-auth-mode", Select).value)
             models_ep = self.query_one("#inp-models-ep", Input).value.strip() or "/v1/models"
         except ConfigError as exc:
@@ -1378,6 +1416,7 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
                 auth_mode=auth_mode,
                 auth_env=auth_env,
                 models_endpoint=models_ep,
+                token=typed_key or None,
             )
         except (FetchError, ConfigError) as exc:
             status_lbl.update(f"Fetch failed: {exc}")
