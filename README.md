@@ -145,6 +145,26 @@ cached_models = []
 "claude-sonnet-5-5" = "deepseek-v4-pro"
 ```
 
+## Updating
+
+```bash
+# npm / bun installs
+npm install -g git+https://github.com/seiz888/szswap.git   # or: npm install -g szswap
+bun add -g   git+https://github.com/seiz888/szswap.git
+
+# Python tool installs
+uv tool upgrade szswap
+pipx upgrade szswap
+```
+
+The npm/bun wrapper fingerprints the packaged Python sources, so a reinstall
+refreshes `~/.szswap/venv` even when the version number did not change. Verify
+with `szswap --version`. If a venv ever gets wedged, delete it and rerun:
+
+```bash
+rm -rf ~/.szswap/venv && szswap --version
+```
+
 ## Security Notes
 
 - `config.toml` only stores `auth_env` (the environment variable name), never secret values.

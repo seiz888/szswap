@@ -116,6 +116,14 @@ def test_python_dash_m_entrypoint(tmp_path: Path) -> None:
     assert "szswap" in proc.stdout
 
 
+def test_cli_version_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv("SZSWAP_HOME", str(tmp_path / "szswap"))
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["--version"])
+    assert exc_info.value.code == 0
+    assert "szswap 0.1.0" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # Config: tolerate broken entries, round-trip extra Claude slots
 # ---------------------------------------------------------------------------

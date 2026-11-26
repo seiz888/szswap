@@ -9,6 +9,7 @@
  */
 
 const { spawnSync } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -102,11 +103,33 @@ function readMarker(dir) {
   }
 }
 
+/**
+ * Hash the packaged Python sources so `npm install`-ing a new build of the same
+ * version still refreshes the venv (git checkouts and local symlinks change).
+ */
+function sourceFingerprint() {
+  const digest = crypto.createHash("sha256");
+  digest.update(PKG_VERSION);
+  const pyproject = path.join(PKG_ROOT, "pyproject.toml");
+  if (fs.existsSync(pyproject)) digest.update(fs.readFileSync(pyproject));
+  const srcDir = path.join(PKG_ROOT, "src", "szswap");
+  const files = fs
+    .readdirSync(srcDir)
+    .filter((name) => name.endsWith(".py"))
+    .sort();
+  for (const name of files) {
+    digest.update(name);
+    digest.update(fs.readFileSync(path.join(srcDir, name)));
+  }
+  return digest.digest("hex");
+}
+
 function venvUsable(dir) {
   const python = venvPython(dir);
   if (!fs.existsSync(python)) return false;
   const marker = readMarker(dir);
   if (!marker || marker.version !== PKG_VERSION) return false;
+  if (marker.sourceHash !== sourceFingerprint()) return false;
   const probe = spawnSync(python, ["-c", "import szswap"], { stdio: "ignore" });
   return probe.status === 0;
 }
@@ -160,7 +183,16 @@ function ensureVenv({ force = false } = {}) {
 
   fs.writeFileSync(
     markerPath(dir),
-    `${JSON.stringify({ version: PKG_VERSION, python, installedAt: new Date().toISOString() }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        version: PKG_VERSION,
+        sourceHash: sourceFingerprint(),
+        python,
+        installedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    )}\n`,
     { mode: 0o600 },
   );
   return venvPython(dir);
@@ -171,6 +203,7 @@ module.exports = {
   PKG_VERSION,
   ensureVenv,
   findPython,
+  sourceFingerprint,
   szswapHome,
   venvDir,
   venvPython,

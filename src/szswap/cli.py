@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from szswap import __version__
 from szswap.config import (
     AppConfig,
     ConfigError,
@@ -168,6 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="szswap",
         description="Safe multi-provider & model-override switcher for Claude Code",
     )
+    parser.add_argument("--version", action="version", version=f"szswap {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("ui", help="Launch the interactive TUI (default)")
