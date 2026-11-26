@@ -112,6 +112,15 @@ npm pack                     # szswap-<version>.tgz for the npm/bun wrapper
 
 Configuration is stored in `~/.szswap/config.toml` (override directory with `SZSWAP_HOME`; override Claude Code config directory with `SZSWAP_CLAUDE_DIR`).
 
+> **`auth_env` is the name of an environment variable, never the key.** szswap
+> refuses values that look like a raw token (`sk-…`, `ah-…`, `Bearer …`). Pick a
+> name such as `SZ_API_KEY`, save the provider, then export the key in your shell:
+>
+> ```bash
+> export SZ_API_KEY="ah-..."
+> szswap use sz        # or: szswap run sz
+> ```
+
 ```toml
 schema_version = 1
 default_provider = "mygw"

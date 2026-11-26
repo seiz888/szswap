@@ -940,6 +940,7 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
     #lbl-env-status {
         margin-top: 0;
         padding: 0 1;
+        height: auto;
     }
     #fetch-row {
         height: auto;
@@ -952,6 +953,8 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
         margin-left: 2;
         color: #94A3B8;
         content-align: left middle;
+        width: 1fr;
+        height: auto;
     }
     #tbl-mappings {
         height: 1fr;
@@ -1042,7 +1045,7 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
                         placeholder="MY_GATEWAY_API_KEY",
                         id="inp-auth-env",
                     )
-                    yield Static("", id="lbl-env-status", markup=True)
+                    yield Static("", id="lbl-env-status", markup=False)
                     yield Label("Models Endpoint", classes="field-label")
                     yield Input(
                         value=models_ep,
@@ -1200,19 +1203,24 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
         lbl = self.query_one("#lbl-env-status", Static)
         text = raw_value.strip()
         if not text:
-            lbl.update("[#FBBF24]▲ ENV NOT SET[/]")
+            lbl.update(Text("▲ Name only, e.g. SZ_API_KEY", style="#FBBF24"))
             return
         try:
             env_name = validate_env_var_name(text)
         except ConfigError as exc:
-            lbl.update(f"[#F87171]✕ INVALID ENV VAR: {escape(str(exc))}[/]")
+            lbl.update(Text(f"✕ {exc}", style="#F87171"))
             return
 
         is_set, length = check_env_status(env_name)
         if is_set:
-            lbl.update(f"[#4ADE80]● ENV SET (len={length})[/]")
+            lbl.update(Text(f"● {env_name} is set (len={length})", style="#4ADE80"))
         else:
-            lbl.update("[#F87171]▲ ENV NOT SET[/]")
+            lbl.update(
+                Text(
+                    f"▲ {env_name} not exported — run: export {env_name}=...",
+                    style="#F87171",
+                )
+            )
 
     @on(Input.Changed, "#inp-auth-env")
     def _on_auth_env_changed(self, event: Input.Changed) -> None:

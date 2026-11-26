@@ -248,6 +248,51 @@ async def test_dashboard_arrow_navigation_and_quick_map(isolated_env: tuple[Path
     assert updated.providers["mygw"].model_overrides["claude-opus-5-5"] == "kimi-k3"
 
 
+async def test_editor_explains_env_var_name_vs_raw_key(
+    isolated_env: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _ = isolated_env
+    monkeypatch.delenv("SZ_API_KEY", raising=False)
+    cfg = AppConfig(
+        default_provider="sz",
+        providers={
+            "sz": ProviderConfig(
+                id="sz",
+                display_name="Seiz",
+                base_url="https://sg.seiz.cloud/anthropic",
+                auth_mode="bearer",
+                auth_env="SZ_API_KEY",
+            )
+        },
+    )
+    save_config(cfg)
+
+    app = SzSwapApp()
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        screen = app.screen
+        auth_input = screen.query_one("#inp-auth-env", Input)
+        status = screen.query_one("#lbl-env-status", Static)
+
+        # A pasted API key must be rejected with an explanation, not a regex dump.
+        auth_input.value = "ah-0123456789abcdef0123456789abcdef"
+        await pilot.pause()
+        raw_key_status = str(status.render())
+        assert "API key" in raw_key_status
+        assert "SZ_API_KEY" in raw_key_status
+        assert "^[" not in raw_key_status
+
+        # A variable name is accepted; the UI says how to export it.
+        auth_input.value = "SZ_API_KEY"
+        await pilot.pause()
+        name_status = str(status.render())
+        assert "SZ_API_KEY" in name_status
+        assert "not exported" in name_status
+
+
 async def test_editor_and_modal_arrow_navigation(isolated_env: tuple[Path, Path]) -> None:
     _, _ = isolated_env
     cfg = AppConfig(

@@ -92,26 +92,41 @@ def test_validate_provider_id_rejects_invalid(bad_id: str) -> None:
         validate_provider_id(bad_id)
 
 
-@pytest.mark.parametrize("good_env", ["MY_GATEWAY_API_KEY", "_PRIVATE_KEY", "API_KEY_2"])
+@pytest.mark.parametrize("good_env", ["MY_GATEWAY_API_KEY", "_PRIVATE_KEY", "API_KEY_2", "SZ_API_KEY"])
 def test_validate_env_var_name_accepts_valid(good_env: str) -> None:
     assert validate_env_var_name(good_env) == good_env
+
+
+def test_validate_env_var_name_trims_surrounding_whitespace() -> None:
+    assert validate_env_var_name("  SZ_API_KEY\n") == "SZ_API_KEY"
 
 
 @pytest.mark.parametrize(
     "bad_env",
     [
         "",
+        "   ",
         "sk-ant-api03-secretvalue",
         "SK-1234567890",
+        "ah-90307136adf3e863c0ab0052e37628d954582ec6de538c5eb4bcbf1d9b570277",
         "MY KEY",
         "MY-KEY",
         "123_KEY",
-        "MY_KEY\n",
+        "SZ_API_KEY=value",
     ],
 )
 def test_validate_env_var_name_rejects_secrets_and_invalid(bad_env: str) -> None:
     with pytest.raises(ConfigError):
         validate_env_var_name(bad_env)
+
+
+@pytest.mark.parametrize("raw_key", ["sk-ant-api03-x", "ah-9030abcd", "Bearer abc123"])
+def test_validate_env_var_name_explains_what_to_do_instead(raw_key: str) -> None:
+    with pytest.raises(ConfigError) as exc_info:
+        validate_env_var_name(raw_key)
+    message = str(exc_info.value)
+    assert "API key" in message
+    assert "SZ_API_KEY" in message
 
 
 def test_validate_base_url() -> None:

@@ -23,6 +23,18 @@ AUTH_MODES: tuple[str, ...] = ("bearer", "x-api-key")
 
 _PROVIDER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
 _ENV_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SECRET_PREFIXES: tuple[str, ...] = (
+    "sk-",
+    "sk_",
+    "ah-",
+    "ah_",
+    "pk-",
+    "pk_",
+    "gsk_",
+    "xai-",
+    "bearer ",
+    "basic ",
+)
 
 def validate_provider_id(pid: str) -> str:
     """Validate and normalize a provider identifier."""
@@ -44,17 +56,25 @@ def validate_env_var_name(name: str) -> str:
     """Validate an environment variable name and reject raw secret values."""
     if not isinstance(name, str):
         raise ConfigError("Environment variable name must be a string.")
-    if not name or any(ch.isspace() for ch in name):
-        raise ConfigError("Environment variable name must be non-empty without whitespace.")
-    if name.lower().startswith("sk-"):
+    cleaned = name.strip()
+    if not cleaned:
         raise ConfigError(
-            "Refusing raw API key; provide an environment variable name (e.g. MY_API_KEY) instead."
+            "Enter an environment variable name such as SZ_API_KEY (not the key itself)."
         )
-    if not _ENV_VAR_RE.fullmatch(name):
+    lowered = cleaned.lower()
+    if lowered.startswith(_SECRET_PREFIXES) or "=" in cleaned:
         raise ConfigError(
-            "Environment variable name must match ^[A-Za-z_][A-Za-z0-9_]*$ and not be a raw secret."
+            "That looks like an API key. Enter its variable NAME instead, e.g. SZ_API_KEY, "
+            "then export the key in your shell — szswap never stores it."
         )
-    return name
+    if any(ch.isspace() for ch in cleaned):
+        raise ConfigError("Environment variable names cannot contain spaces.")
+    if not _ENV_VAR_RE.fullmatch(cleaned):
+        raise ConfigError(
+            "Use letters, digits and underscores only, starting with a letter or underscore "
+            "(e.g. SZ_API_KEY)."
+        )
+    return cleaned
 
 
 def validate_base_url(url: str) -> str:
