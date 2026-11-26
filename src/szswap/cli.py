@@ -12,8 +12,12 @@ from szswap.config import (
     ConfigError,
     ProviderConfig,
     check_env_status,
+    default_env_name,
+    delete_secret,
+    env_value_source,
     load_config,
     save_config,
+    save_secret,
 )
 from szswap.engine import (
     EngineError,
@@ -36,7 +40,11 @@ def _require_provider(cfg: AppConfig, provider_id: str) -> ProviderConfig:
 
 def _format_env_badge(var_name: str) -> str:
     is_set, length = check_env_status(var_name)
-    return f"SET (len={length})" if is_set else "NOT SET"
+    if not is_set:
+        return "NOT SET"
+    source = env_value_source(var_name)
+    label = {"env": "ENV", "store": "STORED", "registry": "REGISTRY"}.get(source or "", "SET")
+    return f"{label} (len={length})"
 
 
 def _cmd_ui() -> int:
@@ -132,6 +140,30 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_key(args: argparse.Namespace) -> int:
+    import getpass
+
+    cfg = load_config()
+    provider = _require_provider(cfg, args.provider)
+
+    if args.action == "clear":
+        removed = delete_secret(provider.auth_env) if provider.auth_env else False
+        if removed:
+            print(f"Removed stored key for '{provider.auth_env}'.")
+        else:
+            print(f"No stored key for '{provider.auth_env or provider.id}'.")
+        return 0
+
+    if not provider.auth_env:
+        provider.auth_env = default_env_name(provider.id)
+        save_config(cfg)
+        print(f"Using env var name '{provider.auth_env}'.")
+    value = getpass.getpass(f"API key for '{provider.id}' ({provider.auth_env}): ")
+    path = save_secret(provider.auth_env, value)
+    print(f"Stored key for '{provider.auth_env}' in {path} (mode 600).")
+    return 0
+
+
 def _cmd_providers() -> int:
     cfg = load_config()
     if not cfg.providers:
@@ -186,6 +218,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="Show Hot-Swap status, Claude account, and configured providers")
     p_fetch = sub.add_parser("fetch", help="Fetch and cache available models for a provider")
     p_fetch.add_argument("provider", help="Provider ID")
+
+    p_key = sub.add_parser(
+        "key",
+        help="Store or clear a provider API key in ~/.szswap/secrets.json (mode 0600)",
+    )
+    p_key.add_argument("action", choices=["set", "clear"], help="'set' prompts securely, 'clear' removes")
+    p_key.add_argument("provider", help="Provider ID")
 
     sub.add_parser("providers", help="List configured providers and model overrides")
 
@@ -248,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_status()
         if args.command == "fetch":
             return _cmd_fetch(args)
+        if args.command == "key":
+            return _cmd_key(args)
         if args.command == "providers":
             return _cmd_providers()
         print(f"error: unknown command '{args.command}'", file=sys.stderr)

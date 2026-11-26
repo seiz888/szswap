@@ -36,8 +36,13 @@ from szswap.config import (
     ConfigError,
     ProviderConfig,
     check_env_status,
+    default_env_name,
+    delete_secret,
+    env_value_source,
     load_config,
+    load_secrets,
     save_config,
+    save_secret,
     validate_base_url,
     validate_env_var_name,
     validate_provider_id,
@@ -453,7 +458,8 @@ class ConfirmDeleteModal(ModalScreen[bool]):
                 (
                     f"Delete provider [bold #F8FAFC]{escape(self._provider.id)}[/] "
                     f"[#94A3B8]({escape(self._provider.display_name)})[/]?\n"
-                    "[#64748B]Stored environment variables and ~/.claude/settings.json are not modified.[/]"
+                    "[#64748B]Its stored API key is removed too (unless another provider "
+                    "uses the same env var).[/]"
                 ),
                 id="delete-body",
                 markup=True,
@@ -1042,8 +1048,15 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
                     yield Label("Auth Env Var", classes="field-label")
                     yield Input(
                         value=p.auth_env if p else "",
-                        placeholder="MY_GATEWAY_API_KEY",
+                        placeholder="SZ_API_KEY",
                         id="inp-auth-env",
+                    )
+                    yield Label("API Key (optional)", classes="field-label")
+                    yield Input(
+                        value="",
+                        placeholder=self._api_key_placeholder(),
+                        password=True,
+                        id="inp-api-key",
                     )
                     yield Static("", id="lbl-env-status", markup=False)
                     yield Label("Models Endpoint", classes="field-label")
@@ -1078,10 +1091,17 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
             yield Button("Cancel", id="btn-cancel", classes="chip", compact=True)
             yield Static("", id="lbl-editor-error", markup=False)
 
+    def _api_key_placeholder(self) -> str:
+        if self._existing and self._existing.auth_env:
+            stored = load_secrets().get(self._existing.auth_env)
+            if stored:
+                return "•••••••• stored — type to replace"
+        return "paste key (stored 0600 in ~/.szswap/secrets.json)"
+
     def on_mount(self) -> None:
         left_panel = self.query_one("#editor-left", Vertical)
         left_panel.border_title = "Configuration"
-        left_panel.border_subtitle = "env var only · never stores keys"
+        left_panel.border_subtitle = "key via UI or env var · never in config.toml"
 
         right_panel = self.query_one("#editor-mappings", Vertical)
         right_panel.border_title = "Model Mapping (Claude → Provider)"
@@ -1103,6 +1123,7 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
             self.query_one("#inp-url", Input),
             self.query_one("#sel-auth-mode", Select),
             self.query_one("#inp-auth-env", Input),
+            self.query_one("#inp-api-key", Input),
             self.query_one("#inp-models-ep", Input),
             self.query_one("#inp-default-model", Input),
             self.query_one("#btn-fetch-models", Button),
@@ -1203,7 +1224,7 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
         lbl = self.query_one("#lbl-env-status", Static)
         text = raw_value.strip()
         if not text:
-            lbl.update(Text("▲ Name only, e.g. SZ_API_KEY", style="#FBBF24"))
+            lbl.update(Text("▲ Name only, e.g. SZ_API_KEY — or leave blank and paste a key", style="#FBBF24"))
             return
         try:
             env_name = validate_env_var_name(text)
@@ -1211,13 +1232,18 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
             lbl.update(Text(f"✕ {exc}", style="#F87171"))
             return
 
+        source = env_value_source(env_name)
         is_set, length = check_env_status(env_name)
-        if is_set:
-            lbl.update(Text(f"● {env_name} is set (len={length})", style="#4ADE80"))
+        if source == "env":
+            lbl.update(Text(f"● {env_name} set in your environment (len={length})", style="#4ADE80"))
+        elif source == "store":
+            lbl.update(Text(f"● {env_name} stored by szswap (len={length})", style="#4ADE80"))
+        elif is_set:
+            lbl.update(Text(f"● {env_name} set (len={length})", style="#4ADE80"))
         else:
             lbl.update(
                 Text(
-                    f"▲ {env_name} not exported — run: export {env_name}=...",
+                    f"▲ {env_name} not set — paste a key above or export it",
                     style="#F87171",
                 )
             )
@@ -1375,13 +1401,44 @@ class ProviderEditorScreen(Screen[ProviderConfig | None]):
             auth_mode = str(self.query_one("#sel-auth-mode", Select).value)
             if auth_mode not in AUTH_MODES:
                 raise ConfigError(f"Unsupported auth mode: {auth_mode}")
-            auth_env = validate_env_var_name(self.query_one("#inp-auth-env", Input).value)
+            raw_env = self.query_one("#inp-auth-env", Input).value.strip()
+            api_key = self.query_one("#inp-api-key", Input).value.strip()
+            if raw_env:
+                auth_env = validate_env_var_name(raw_env)
+            elif api_key:
+                auth_env = default_env_name(pid)
+            else:
+                raise ConfigError("Enter an env var name or paste an API key.")
             models_ep = self.query_one("#inp-models-ep", Input).value.strip() or "/v1/models"
             default_model = self.query_one("#inp-default-model", Input).value.strip()
         except ConfigError as exc:
             err_lbl.update(str(exc))
             self.notify(str(exc), severity="error")
             return
+
+        if api_key:
+            try:
+                save_secret(auth_env, api_key)
+            except (ConfigError, OSError) as exc:
+                message = f"Could not store API key: {exc}"
+                err_lbl.update(message)
+                self.notify(message, severity="error")
+                return
+        elif (
+            self._existing is not None
+            and self._existing.auth_env
+            and self._existing.auth_env != auth_env
+        ):
+            # Renaming the env var should carry the stored key over, not drop it.
+            stored = load_secrets().get(self._existing.auth_env)
+            if stored:
+                try:
+                    save_secret(auth_env, stored)
+                except (ConfigError, OSError) as exc:
+                    message = f"Could not migrate stored API key: {exc}"
+                    err_lbl.update(message)
+                    self.notify(message, severity="error")
+                    return
 
         clean_overrides = {
             k.strip(): v.strip()
@@ -1784,9 +1841,15 @@ class SzSwapApp(App[LaunchRequest | None]):
             return
 
         is_set, length = check_env_status(provider.auth_env)
-        env_badge = (
-            f"[#4ADE80]● SET (len={length})[/]" if is_set else "[#F87171]▲ NOT SET[/]"
-        )
+        source = env_value_source(provider.auth_env) if provider.auth_env else None
+        if source == "env":
+            env_badge = f"[#4ADE80]● ENV SET (len={length})[/]"
+        elif source == "store":
+            env_badge = f"[#4ADE80]● STORED (len={length})[/]"
+        elif is_set:
+            env_badge = f"[#4ADE80]● SET (len={length})[/]"
+        else:
+            env_badge = "[#F87171]▲ NOT SET[/]"
         details_panel.border_subtitle = "KEY OK" if is_set else "KEY MISSING"
 
         default_model = (
@@ -1915,12 +1978,22 @@ class SzSwapApp(App[LaunchRequest | None]):
             return False
 
     def _persist_provider(self, provider: ProviderConfig) -> None:
+        previous = self.cfg.providers.get(provider.id)
         self.cfg.providers[provider.id] = provider
         if not self.cfg.default_provider:
             self.cfg.default_provider = provider.id
         if not self._safe_save_config():
             self._refresh_all()
             return
+        if (
+            previous is not None
+            and previous.auth_env
+            and previous.auth_env != provider.auth_env
+            and not any(
+                p.auth_env == previous.auth_env for p in self.cfg.providers.values()
+            )
+        ):
+            delete_secret(previous.auth_env)
         self.selected_provider_id = provider.id
         self._refresh_all()
         self.notify(f"Saved provider '{provider.id}'.")
@@ -2106,6 +2179,10 @@ class SzSwapApp(App[LaunchRequest | None]):
             if not self._safe_save_config():
                 self._refresh_all()
                 return
+            if provider.auth_env and not any(
+                p.auth_env == provider.auth_env for p in self.cfg.providers.values()
+            ):
+                delete_secret(provider.auth_env)
             self.selected_provider_id = None
             self._refresh_all()
             self.notify(f"Deleted provider '{provider.id}'.")

@@ -72,19 +72,14 @@ npm pack                     # szswap-<version>.tgz for the npm/bun wrapper
 
 ## Quickstart
 
-1. Export your gateway API key in your environment:
-
-   ```bash
-   export MY_GATEWAY_API_KEY="sk-..."
-   ```
-
-2. Launch the TUI to add a provider and configure model overrides:
+1. Launch the TUI and add a provider — paste the API key right into the editor
+   (or leave it blank and export `SZ_API_KEY` in your shell instead):
 
    ```bash
    szswap
    ```
 
-3. Run Claude Code using an isolated profile or Hot-Swap:
+2. Run Claude Code using an isolated profile or Hot-Swap:
 
    ```bash
    # Mode A: isolated CLAUDE_CONFIG_DIR, token stays in process env only
@@ -106,19 +101,25 @@ npm pack                     # szswap-<version>.tgz for the npm/bun wrapper
 | `szswap use <provider\|off\|anthropic\|default>` | Toggle Hot-Swap in `~/.claude/settings.json`; `off` restores the values that existed before |
 | `szswap status` | Show current Hot-Swap status, Claude account, and configured providers |
 | `szswap fetch <provider>` | Fetch and cache models from the provider's models endpoint |
+| `szswap key set\|clear <provider>` | Store (prompted) or remove an API key in `~/.szswap/secrets.json` |
 | `szswap providers` | List configured providers and model overrides |
 
 ## Configuration
 
 Configuration is stored in `~/.szswap/config.toml` (override directory with `SZSWAP_HOME`; override Claude Code config directory with `SZSWAP_CLAUDE_DIR`).
 
-> **`auth_env` is the name of an environment variable, never the key.** szswap
-> refuses values that look like a raw token (`sk-…`, `ah-…`, `Bearer …`). Pick a
-> name such as `SZ_API_KEY`, save the provider, then export the key in your shell:
+> **API keys are entered in the UI, never in `config.toml`.** The provider editor
+> has an optional `API Key` field (masked). It is stored in
+> `~/.szswap/secrets.json` with mode `0600`, keyed by the env var name. Leave
+> `Auth Env Var` blank and szswap derives `SZ_<ID>_API_KEY`. That field itself
+> only accepts a variable *name* — pasting a token there is rejected with a hint.
+>
+> A value exported in your shell always wins over the stored file, which is handy
+> for CI or temporary rotation:
 >
 > ```bash
 > export SZ_API_KEY="ah-..."
-> szswap use sz        # or: szswap run sz
+> szswap use seiz        # or: szswap run seiz
 > ```
 
 ```toml
@@ -168,7 +169,8 @@ rm -rf ~/.szswap/venv && szswap --version
 ## Security Notes
 
 - `config.toml` only stores `auth_env` (the environment variable name), never secret values.
-- **Mode A (`szswap run`)** never persists API tokens to disk.
+- Keys pasted in the UI live in `~/.szswap/secrets.json` (mode `0600`, owner-only). Resolution order is: process env → secrets file → Windows user/machine registry. Deleting the provider removes its key unless another provider shares the same env var.
+- **Mode A (`szswap run`)** injects the token through the process environment only; it is never written into the profile's `settings.json`.
 - **Mode B (`szswap use`)** writes the resolved token into `~/.claude/settings.json` (`env.ANTHROPIC_AUTH_TOKEN` or `env.ANTHROPIC_API_KEY`) as required by Claude Code's settings file, and sets the file mode to `0600`.
 - Before the first Hot-Swap, the previous `env` / `modelOverrides` values are snapshotted to `~/.szswap/state.json` (mode `0600`; it may contain a token you configured yourself). `szswap use off` restores that snapshot exactly, so a key or override you configured yourself is never destroyed. The snapshot is deleted once restored.
 - Invalid provider entries in `config.toml` are skipped with a warning instead of making the whole configuration unreadable.

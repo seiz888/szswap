@@ -107,7 +107,9 @@ async def fetch_models_async(
 
     token = resolve_env_var(auth_env)
     if not token:
-        raise FetchError(f"Environment variable '{auth_env}' is not set or empty.")
+        raise FetchError(
+            f"No API key for '{auth_env}': export it or store it in the provider editor."
+        )
 
     try:
         urls = build_models_urls(base_url, models_endpoint)

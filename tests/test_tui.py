@@ -285,12 +285,12 @@ async def test_editor_explains_env_var_name_vs_raw_key(
         assert "SZ_API_KEY" in raw_key_status
         assert "^[" not in raw_key_status
 
-        # A variable name is accepted; the UI says how to export it.
+        # A variable name is accepted; the UI says how to provide the key.
         auth_input.value = "SZ_API_KEY"
         await pilot.pause()
         name_status = str(status.render())
         assert "SZ_API_KEY" in name_status
-        assert "not exported" in name_status
+        assert "not set" in name_status
 
 
 async def test_editor_and_modal_arrow_navigation(isolated_env: tuple[Path, Path]) -> None:

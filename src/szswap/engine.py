@@ -94,7 +94,8 @@ def _require_token(provider: ProviderConfig) -> str:
     token = resolve_env_var(provider.auth_env)
     if not token:
         raise EngineError(
-            f"Environment variable '{provider.auth_env}' for provider '{provider.id}' is not set or empty."
+            f"No API key for provider '{provider.id}': set '{provider.auth_env}' in your "
+            "environment or paste it in the provider editor (szswap)."
         )
     return token
 

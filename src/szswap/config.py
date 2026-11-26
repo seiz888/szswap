@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -165,6 +166,99 @@ def get_config_path() -> Path:
     return get_szswap_dir() / "config.toml"
 
 
+def get_secrets_path() -> Path:
+    """Return the path to the 0600 secrets file (never config.toml)."""
+    return get_szswap_dir() / "secrets.json"
+
+
+def default_env_name(provider_id: str) -> str:
+    """Derive an env var name for a provider, e.g. 'my-gw' -> 'SZ_MY_GW_API_KEY'."""
+    cleaned = validate_provider_id(provider_id)
+    return f"SZ_{cleaned.upper().replace('-', '_')}_API_KEY"
+
+
+def _write_private_json(path: Path, payload: dict[str, Any]) -> Path:
+    """Atomically write JSON with owner-only permissions."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rendered = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_path = handle.name
+            handle.write(rendered)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return path
+
+
+def load_secrets(path: Path | None = None) -> dict[str, str]:
+    """Read stored API keys from the 0600 secrets file, tolerating damage."""
+    secrets_path = path if path is not None else get_secrets_path()
+    if not secrets_path.exists():
+        return {}
+    try:
+        raw = json.loads(secrets_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    cleaned: dict[str, str] = {}
+    for key, value in raw.items():
+        if isinstance(key, str) and isinstance(value, str) and value.strip():
+            cleaned[key] = value.strip()
+    return cleaned
+
+
+def save_secret(env_name: str, value: str, path: Path | None = None) -> Path:
+    """Store an API key under an env var name in the 0600 secrets file."""
+    name = validate_env_var_name(env_name)
+    secret = value.strip()
+    if not secret:
+        raise ConfigError("API key cannot be empty.")
+    if any(ch in secret for ch in "\r\n"):
+        raise ConfigError("API key must be a single line.")
+    secrets_path = path if path is not None else get_secrets_path()
+    secrets = load_secrets(secrets_path)
+    secrets[name] = secret
+    return _write_private_json(secrets_path, secrets)
+
+
+def delete_secret(env_name: str, path: Path | None = None) -> bool:
+    """Remove a stored API key; returns True when something was deleted."""
+    secrets_path = path if path is not None else get_secrets_path()
+    secrets = load_secrets(secrets_path)
+    if env_name not in secrets:
+        return False
+    del secrets[env_name]
+    if secrets:
+        _write_private_json(secrets_path, secrets)
+    else:
+        try:
+            secrets_path.unlink()
+        except OSError:
+            pass
+    return True
+
+
 def get_claude_dir() -> Path:
     """Return the Claude Code config directory (SZSWAP_CLAUDE_DIR or ~/.claude)."""
     override = os.environ.get("SZSWAP_CLAUDE_DIR", "").strip()
@@ -203,11 +297,27 @@ def _resolve_windows_registry_env(var_name: str) -> str | None:
     return None
 
 
+def env_value_source(var_name: str) -> str | None:
+    """Report where a value would come from: 'env', 'store', 'registry', or None."""
+    if not isinstance(var_name, str) or not _ENV_VAR_RE.fullmatch(var_name):
+        return None
+    if os.environ.get(var_name):
+        return "env"
+    if load_secrets().get(var_name):
+        return "store"
+    if sys.platform == "win32" and _resolve_windows_registry_env(var_name):
+        return "registry"
+    return None
+
+
 def resolve_env_var(var_name: str) -> str | None:
-    """Resolve an environment variable from process env, with Windows registry fallback."""
+    """Resolve a secret from process env, then the 0600 secrets file, then Windows registry."""
     if not isinstance(var_name, str) or not _ENV_VAR_RE.fullmatch(var_name):
         return None
     val = os.environ.get(var_name)
+    if val:
+        return val
+    val = load_secrets().get(var_name)
     if val:
         return val
     if sys.platform == "win32":
